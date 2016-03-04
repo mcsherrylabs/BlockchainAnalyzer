@@ -17,8 +17,11 @@ import scala.collection.JavaConversions._
 import scala.util.Random
 
 
-object BitcoinAnalizer {
-  val db = DBMaker.fileDB(new File(s"/tmp/state"))
+object BitcoinAnalyzer {
+  val Folder = "/opt/scorex/BitcoinAnalyzer/"
+  new File(Folder).mkdirs()
+
+  val db = DBMaker.fileDB(new File(Folder + "db"))
     .closeOnJvmShutdown()
     .checksumEnable()
     .make()
@@ -33,10 +36,13 @@ object BitcoinAnalizer {
 
 
     override def notifyNewBestBlock(block: StoredBlock): Unit = {
-      val randoms = db.treeMap[Int, Long]("randoms").filter(_._1 > 360000)
+      val difficulty = db.treeMap[Int, Long]("Difficulty").filter(_._1 > 360000)
+      difficulty.put(block.getHeight, block.getHeader.getDifficultyTarget)
+      val timestamp = db.treeMap[Int, Long]("timestamp").filter(_._1 > 360000)
+      timestamp.put(block.getHeight, block.getHeader.getTimeSeconds)
 
-      println("random for: " + block.getHeight + " value: " + block.getHeader.getDifficultyTarget)
-      randoms.put(block.getHeight, block.getHeader.getDifficultyTarget)
+      println("height: " + block.getHeight + ", difficulty: " + block.getHeader.getDifficultyTarget + ", timestamp:" +
+        block.getHeader.getTimeSeconds)
       db.commit()
     }
 
@@ -62,7 +68,7 @@ object BitcoinAnalizer {
 
   def chainDownload(): Unit = {
     val netParams = MainNetParams.get()
-    val store = new SPVBlockStore(netParams, new java.io.File("/tmp/spv_testnet"))
+    val store = new SPVBlockStore(netParams, new java.io.File(Folder + "blochchain"))
 
     val ls: List[BlockChainListener] = List(listener)
     val chain = new BlockChain(netParams, ls, store)
