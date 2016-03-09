@@ -46,7 +46,10 @@ object BitcoinAnalyzer {
     override def notifyNewBestBlock(block: StoredBlock): Unit = {
       difficulty.put(block.getHeight, block.getHeader.getDifficultyTarget)
       timestamp.put(block.getHeight, block.getHeader.getTimeSeconds)
-      db.commit()
+      if (Random.nextInt(1000) == 1) {
+        println("db.commit()")
+        db.commit()
+      }
 
       println("height: " + block.getHeight + ", difficulty: " + block.getHeader.getDifficultyTarget + ", timestamp:" +
         block.getHeader.getTimeSeconds)
@@ -170,9 +173,10 @@ object BitcoinAnalyzer {
   }
 
   def main(args: Array[String]): Unit = {
-    recoverChain()
-    println(difficulty.keySet())
-    //    chainDownload()
+    //    recoverChain()
+    println("Current diff size = " + difficulty.keySet().size)
+    chainDownload()
+    db.commit()
     //    analyzeDiff()
 
   }
