@@ -1,6 +1,6 @@
 package iohk.scorex
 
-import java.io.File
+import java.io.{BufferedWriter, File, FileWriter}
 import java.nio.ByteBuffer
 import java.security.SecureRandom
 import java.util
@@ -21,10 +21,18 @@ object BitcoinAnalyzer {
   val Folder = "/opt/scorex/BitcoinAnalyzer/"
   new File(Folder).mkdirs()
 
+  val netParams = MainNetParams.get()
+  lazy val store = new SPVBlockStore(netParams, new java.io.File(Folder + "blochchain"))
+  lazy val ls: List[BlockChainListener] = List(listener)
+  lazy val chain = new BlockChain(netParams, ls, store)
+
   val db = DBMaker.fileDB(new File(Folder + "db"))
     .closeOnJvmShutdown()
     .checksumEnable()
     .make()
+
+  val difficulty = db.treeMap[Int, Long]("Difficulty")
+  val timestamp = db.treeMap[Int, Long]("timestamp")
 
 
   val listener = new BlockChainListener {
@@ -36,14 +44,12 @@ object BitcoinAnalyzer {
 
 
     override def notifyNewBestBlock(block: StoredBlock): Unit = {
-      val difficulty = db.treeMap[Int, Long]("Difficulty").filter(_._1 > 360000)
       difficulty.put(block.getHeight, block.getHeader.getDifficultyTarget)
-      val timestamp = db.treeMap[Int, Long]("timestamp").filter(_._1 > 360000)
       timestamp.put(block.getHeight, block.getHeader.getTimeSeconds)
+      db.commit()
 
       println("height: " + block.getHeight + ", difficulty: " + block.getHeader.getDifficultyTarget + ", timestamp:" +
         block.getHeader.getTimeSeconds)
-      db.commit()
     }
 
     override def notifyTransactionIsInBlock(txHash: Sha256Hash,
@@ -67,11 +73,7 @@ object BitcoinAnalyzer {
   }
 
   def chainDownload(): Unit = {
-    val netParams = MainNetParams.get()
-    val store = new SPVBlockStore(netParams, new java.io.File(Folder + "blochchain"))
 
-    val ls: List[BlockChainListener] = List(listener)
-    val chain = new BlockChain(netParams, ls, store)
 
     val peerGroup = new PeerGroup(netParams, chain)
     peerGroup.setUserAgent("SmartContract.com", "0.1")
@@ -145,9 +147,33 @@ object BitcoinAnalyzer {
     println("Analysis is done")
   }
 
+  def analyzeDiff(): Unit = {
+    val RetargetTimestamp = 2016
+    val MaxHeight = 201600
+    val heights = (1 to RetargetTimestamp by MaxHeight)
+    println(heights)
+    val file = new File("difficulties")
+    val bw = new BufferedWriter(new FileWriter(file))
+    heights.foreach(i => bw.write(difficulty.get(i).toString + "\n"))
+    bw.close()
+  }
+
+  def recoverChain(): Unit = {
+    val last = store.getChainHead.getHeader
+    def loop(hash: Sha256Hash): Unit = {
+      val block = store.get(hash)
+      listener.notifyNewBestBlock(block)
+      loop(block.getHeader.getPrevBlockHash)
+    }
+    loop(last.getHash)
+
+  }
 
   def main(args: Array[String]): Unit = {
-    chainDownload()
-    analyze()
+    recoverChain()
+    println(difficulty.keySet())
+    //    chainDownload()
+    //    analyzeDiff()
+
   }
 }
