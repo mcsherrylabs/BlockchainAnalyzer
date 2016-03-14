@@ -1,6 +1,7 @@
 package iohk.scorex
 
 import java.io.{BufferedWriter, File, FileWriter}
+import java.math.BigInteger
 import java.nio.ByteBuffer
 import java.security.SecureRandom
 import java.util
@@ -20,11 +21,14 @@ import scala.util.Random
 object BitcoinAnalyzer {
   val Folder = "/opt/scorex/BitcoinAnalyzer/"
   new File(Folder).mkdirs()
+  val RetargetTimestamp = 2016
 
   val netParams = MainNetParams.get()
   lazy val store = new SPVBlockStore(netParams, new java.io.File(Folder + "blochchain"))
   lazy val ls: List[BlockChainListener] = List(listener)
   lazy val chain = new BlockChain(netParams, ls, store)
+  lazy val MaxHeight = store.getChainHead.getHeight
+
 
   val db = DBMaker.fileDB(new File(Folder + "db"))
     .closeOnJvmShutdown()
@@ -151,15 +155,36 @@ object BitcoinAnalyzer {
   }
 
   def analyzeDiff(): Unit = {
-    val RetargetTimestamp = 2016
-    val MaxHeight = 201600
-    val heights = (1 to RetargetTimestamp by MaxHeight)
-    println(heights)
-    val file = new File("difficulties")
+    val heights = (1 to MaxHeight by RetargetTimestamp)
+    val file = new File("difficulties.txt")
     val bw = new BufferedWriter(new FileWriter(file))
-    heights.foreach(i => bw.write(difficulty.get(i).toString + "\n"))
+    heights.foreach(i => bw.write(i.toString + " " + getDifficultyTargetAsInteger(difficulty.get(i)).toString + "\n"))
     bw.close()
   }
+
+  def analyzeTimestamps(): Unit = {
+    val heights = (1 to (MaxHeight - RetargetTimestamp) by RetargetTimestamp)
+    var diffs: IndexedSeq[Long] = (0 until  RetargetTimestamp).map(i => 0L)
+    println(diffs)
+    heights.foreach { h =>
+      println(h)
+      (0 until RetargetTimestamp).foreach { i =>
+        val current = diffs(i)
+        val diff: Long = (timestamp.get(h + i + 1) - timestamp.get(h + i))
+        if(diff < 0) println(s"WARN: ${h + i}=>$diff")
+        diffs = diffs.updated(i, diff + current)
+      }
+    }
+    val meanIntervals:Seq[Long] = diffs.map(_ / heights.size)
+    val file = new File("intervals.txt")
+    val bw = new BufferedWriter(new FileWriter(file))
+    meanIntervals.foreach(i => bw.write(i + "\n"))
+    bw.close()
+    val mean:Long = meanIntervals.sum / meanIntervals.size
+    println(s"Mean = $mean")
+  }
+  //Fri, 26 Jun 2009 21:49:21 GMT
+  // Fri, 26 Jun 2009 22:15:22 GMT 25*60 =  1500
 
   def recoverChain(): Unit = {
     val last = store.getChainHead.getHeader
@@ -172,12 +197,16 @@ object BitcoinAnalyzer {
 
   }
 
-  def main(args: Array[String]): Unit = {
-    //    recoverChain()
-    println("Current diff size = " + difficulty.keySet().size)
-    chainDownload()
-    db.commit()
-    //    analyzeDiff()
+  def getDifficultyTargetAsInteger(difficultyTarget: Long): BigInteger = {
+    return Utils.decodeCompactBits(difficultyTarget)
+  }
 
+  def main(args: Array[String]): Unit = {
+    //    chainDownload()
+    //    db.commit()
+    //    analyzeDiff()
+    analyzeTimestamps()
+
+//    println(store.getChainHead.getHeader.getDifficultyTargetAsInteger)
   }
 }
