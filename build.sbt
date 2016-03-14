@@ -1,4 +1,5 @@
-name := "BlockAnalizer"
+name := "BlockAnalyzer"
+
 
 version := "1.0"
 
