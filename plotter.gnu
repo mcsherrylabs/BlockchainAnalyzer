@@ -15,7 +15,7 @@ set key width 1
 set key height 1
 set output "interval.png"
 set xlabel "Height in epoch"
-set ylabel "Time interval between blocks"
+set ylabel "Time interval between blocks (s)"
 set xrange [0:2016]
 # set style line 10
 f(x) = a*x + b
