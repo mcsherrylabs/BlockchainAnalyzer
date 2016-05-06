@@ -1,6 +1,7 @@
-package iohk.scorex
+package iohk.scorex.bitcoin
 
 import java.io.{BufferedWriter, File, FileWriter}
+import java.math.BigInteger
 import java.nio.ByteBuffer
 import java.security.SecureRandom
 import java.util
@@ -17,31 +18,15 @@ import scala.collection.JavaConversions._
 import scala.util.Random
 
 
-object BitcoinAnalyzer {
+object Analyzer extends App {
+
   val Folder = "/opt/scorex/BitcoinAnalyzer/"
   new File(Folder).mkdirs()
+  val RetargetTimestamp = 2016
 
   val netParams = MainNetParams.get()
   lazy val store = new SPVBlockStore(netParams, new java.io.File(Folder + "blochchain"))
-  lazy val ls: List[BlockChainListener] = List(listener)
-  lazy val chain = new BlockChain(netParams, ls, store)
-
-  val db = DBMaker.fileDB(new File(Folder + "db"))
-    .closeOnJvmShutdown()
-    .checksumEnable()
-    .make()
-
-  val difficulty = db.treeMap[Int, Long]("Difficulty")
-  val timestamp = db.treeMap[Int, Long]("timestamp")
-
-
-  val listener = new BlockChainListener {
-    override def reorganize(splitPoint: StoredBlock,
-                            oldBlocks: util.List[StoredBlock],
-                            newBlocks: util.List[StoredBlock]): Unit = {
-      Unit
-    }
-
+  lazy val listener = new Listener {
 
     override def notifyNewBestBlock(block: StoredBlock): Unit = {
       difficulty.put(block.getHeight, block.getHeader.getDifficultyTarget)
@@ -54,29 +39,27 @@ object BitcoinAnalyzer {
       println("height: " + block.getHeight + ", difficulty: " + block.getHeader.getDifficultyTarget + ", timestamp:" +
         block.getHeader.getTimeSeconds)
     }
-
-    override def notifyTransactionIsInBlock(txHash: Sha256Hash,
-                                            block: StoredBlock,
-                                            blockType: NewBlockType,
-                                            relativityOffset: Int): Boolean = {
-      println("random for: " + block.getHeight + " value: " + block.getHeader.getDifficultyTarget)
-      false
-    }
-
-    override def receiveFromBlock(tx: Transaction,
-                                  block: StoredBlock,
-                                  blockType: NewBlockType,
-                                  relativityOffset: Int): Unit = {
-
-    }
-
-    override def isTransactionRelevant(tx: Transaction): Boolean = {
-      false
-    }
   }
 
-  def chainDownload(): Unit = {
+  lazy val ls: List[BlockChainListener] = List(listener)
+  lazy val chain = new BlockChain(netParams, ls, store)
+  lazy val MaxHeight = store.getChainHead.getHeight
 
+
+  val db = DBMaker.fileDB(new File(Folder + "db"))
+    .closeOnJvmShutdown()
+    .checksumEnable()
+    .make()
+
+  val difficulty = db.treeMap[Int, Long]("Difficulty")
+  val timestamp = db.treeMap[Int, Long]("timestamp")
+
+  chainDownload()
+  db.commit()
+  analyzeDiff()
+  analyzeTimestamps()
+
+  def chainDownload(): Unit = {
 
     val peerGroup = new PeerGroup(netParams, chain)
     peerGroup.setUserAgent("SmartContract.com", "0.1")
@@ -151,14 +134,35 @@ object BitcoinAnalyzer {
   }
 
   def analyzeDiff(): Unit = {
-    val RetargetTimestamp = 2016
-    val MaxHeight = 201600
-    val heights = (1 to RetargetTimestamp by MaxHeight)
-    println(heights)
-    val file = new File("difficulties")
+    def getDifficultyTargetAsInteger(difficultyTarget: Long): BigInteger = Utils.decodeCompactBits(difficultyTarget)
+
+    val heights = (1 to MaxHeight by RetargetTimestamp)
+    val file = new File("difficulties.txt")
     val bw = new BufferedWriter(new FileWriter(file))
-    heights.foreach(i => bw.write(difficulty.get(i).toString + "\n"))
+    heights.foreach(i => bw.write(i.toString + " " + getDifficultyTargetAsInteger(difficulty.get(i)).toString + "\n"))
     bw.close()
+  }
+
+  def analyzeTimestamps(): Unit = {
+    val heights = (1 to (MaxHeight - RetargetTimestamp) by RetargetTimestamp)
+    var diffs: IndexedSeq[Long] = (0 until RetargetTimestamp).map(i => 0L)
+    println(diffs)
+    heights.foreach { h =>
+      println(h)
+      (0 until RetargetTimestamp).foreach { i =>
+        val current = diffs(i)
+        val diff: Long = (timestamp.get(h + i + 1) - timestamp.get(h + i))
+        if (diff < 0) println(s"WARN: ${h + i}=>$diff")
+        diffs = diffs.updated(i, diff + current)
+      }
+    }
+    val meanIntervals: Seq[Long] = diffs.map(_ / heights.size)
+    val file = new File("intervals.txt")
+    val bw = new BufferedWriter(new FileWriter(file))
+    meanIntervals.foreach(i => bw.write(i + "\n"))
+    bw.close()
+    val mean: Long = meanIntervals.sum / meanIntervals.size
+    println(s"Mean = $mean")
   }
 
   def recoverChain(): Unit = {
@@ -172,12 +176,4 @@ object BitcoinAnalyzer {
 
   }
 
-  def main(args: Array[String]): Unit = {
-    //    recoverChain()
-    println("Current diff size = " + difficulty.keySet().size)
-    chainDownload()
-    db.commit()
-    //    analyzeDiff()
-
-  }
 }
